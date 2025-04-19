@@ -38,6 +38,7 @@ elif model_choice == "bagging":
     st.sidebar.info("""
     **Bagging (Bootstrap Aggregating)** adalah teknik ensemble yang mengurangi variance dan membantu mencegah overfitting dengan mengambil sampel dari data training dengan penggantian.
     """)
+    
 
 # menampilkan form input
 with st.form(key='user_input_form'):
