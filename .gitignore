@@ -4,9 +4,6 @@ dataset/
 # Ignore model folder
 model/
 
-# Ignore logs folder
-env/
-
 # Python
 __pycache__/
 *.py[cod]
