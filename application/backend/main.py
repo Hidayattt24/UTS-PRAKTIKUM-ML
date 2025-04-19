@@ -1,64 +1,105 @@
-import uuid
-import uvicorn
+# Backend - FastAPI
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, EmailStr
 import joblib
-from fastapi import File
-from fastapi import UploadFile
-from fastapi import FastAPI
-from pydantic import BaseModel
-from pydantic import EmailStr
-import pickle
 import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer
 
-# mmebuat instance FastAPI
 app = FastAPI()
 
-# mendefinisikan schema input 
+# Skema input dari pengguna
 class UserInput(BaseModel):
-    ... ### lengkapi dengan atribut-atribut yang dibutuhkan
+    name: str
+    gender_female: int  # One-hot encoding untuk female
+    gender_male: int  # One-hot encoding untuk male
+    email_id: EmailStr
+    is_glogin: bool
+    follower_count: int
+    following_count: int
+    dataset_count: int
+    code_count: int
+    discussion_count: int
+    avg_nb_read_time_min: float
+    total_votes_gave_nb: int
+    total_votes_gave_ds: int
+    total_votes_gave_dc: int
+    model_choice: str  # Untuk memilih model yang akan digunakan
 
-
+# Fungsi preprocessing pipeline
 def preprocess_pipeline():
-    numeric_features = [...]  # masukkan kolom-kolom numerik
+    numeric_features = [
+        'follower_count', 'following_count', 'dataset_count',
+        'code_count', 'discussion_count', 'avg_nb_read_time_min',
+        'total_votes_gave_nb', 'total_votes_gave_ds', 'total_votes_gave_dc'
+    ]
+    
+    categorical_boolean_features = ['is_glogin']
 
-    categorical_boolean_features = [...] # masukkan kolom kategorikal dan boolean
+    numeric_transformer = Pipeline(steps=[('scaler', StandardScaler())])
 
-    numeric_transformer = Pipeline(steps=[
-        ...  ## lengkapi dengan pipeline yang dibutuhkan
+    categorical_boolean_transformer = Pipeline(steps=[('onehot', OneHotEncoder(handle_unknown='ignore'))])
+
+    preprocessor = ColumnTransformer(transformers=[
+        ('num', numeric_transformer, numeric_features),
+        ('cat', categorical_boolean_transformer, categorical_boolean_features)
     ])
-
-    categorical_boolean_transfomer = Pipeline(steps=[
-        ... ## lengkapi dengan pipeline yang dibutuhkan
-    ])
-
-    preprocessor = ColumnTransformer(
-        ... ## lengkapi dengan transformer yang dibutuhkan
-    )
 
     return preprocessor
 
-# load model
-model = joblib.load('../../model/model.pkl')    ## SESUAIKAN DENGAN LOKASI MODEL YANG ANDA GUNAKAN
+# Load model yang telah dilatih
+rf_model = joblib.load('../../model/model_rf_tuned.pkl')
+bagging_model = joblib.load('../../model/model_bagging_tuned.pkl')
 
-# endpoint untuk menerima input dan menghasilkan prediksi
-@app.post("/predict/", summary="Melakukan klasifikasi apakah suatu user tergolong bot atau bukan")
+# Dictionary model untuk akses model berdasarkan nama
+models = {
+    'random_forest': rf_model,
+    'bagging': bagging_model
+}
+
+@app.post("/predict/")
 async def predict(user_input: UserInput):
-    # Ubah input menjadi format yang sesuai (pandas DataFrame)
-    data = pd.DataFrame(...)  ## lengkapi dengan data yang akan diproses
-
-    # Terapkan pipeline untuk preprocessing
-    preprocessing_pipeline = preprocess_pipeline()
-    processed_data = preprocessing_pipeline.fit_transform(data) 
+    # Mengubah input menjadi format yang benar
+    data = {
+        'name': user_input.name,
+        'gender_female': user_input.gender_female,
+        'gender_male': user_input.gender_male,
+        'is_glogin': user_input.is_glogin,
+        'follower_count': user_input.follower_count,
+        'following_count': user_input.following_count,
+        'dataset_count': user_input.dataset_count,
+        'code_count': user_input.code_count,
+        'discussion_count': user_input.discussion_count,
+        'avg_nb_read_time_min': user_input.avg_nb_read_time_min,
+        'total_votes_gave_nb': user_input.total_votes_gave_nb,
+        'total_votes_gave_ds': user_input.total_votes_gave_ds,
+        'total_votes_gave_dc': user_input.total_votes_gave_dc
+    }
     
-    # Prediksi dengan model yang sudah dilatih
-    prediction = ... ## lengkapi kode untuk melakukan prediksi
+    # Mengubah menjadi DataFrame
+    df = pd.DataFrame([data])
     
-    return {"prediction": int(prediction[0])}
+    # Hapus kolom name karena tidak digunakan untuk prediksi
+    if 'name' in df.columns:
+        df = df.drop('name', axis=1)
 
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Pilih model berdasarkan pilihan pengguna
+    model_choice = user_input.model_choice
+    if model_choice not in models:
+        raise HTTPException(status_code=400, detail=f"Model '{model_choice}' tidak tersedia")
+    
+    selected_model = models[model_choice]
+    
+    try:
+        # Prediksi langsung menggunakan model yang sudah terlatih
+        prediction = selected_model.predict(df)
+        return {"prediction": int(prediction[0]), "model_used": model_choice}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error prediksi: {str(e)}")
+
+# Endpoint untuk mendapatkan daftar model yang tersedia
+@app.get("/models/")
+async def get_models():
+    return {"available_models": list(models.keys())}
