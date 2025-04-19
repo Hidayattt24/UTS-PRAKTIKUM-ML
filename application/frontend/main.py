@@ -91,8 +91,8 @@ with st.form(key='user_input_form'):
         # Lengkapi dictionary yang akan dikirim ke backend API
         user_input = {
             "name": name,
-            "gender_female": gender_female,
-            "gender_male": gender_male, 
+            "gender_female": gender_female, 
+            "gender_male": gender_male,
             "email_id": email_id,
             "is_glogin": is_glogin,
             "follower_count": follower_count,
@@ -123,6 +123,12 @@ with st.form(key='user_input_form'):
                     st.error('🛑 User terdeteksi BOT.')
                 else:
                     st.success('✅ User tidak terdeteksi BOT.')
+                    
+                # Tampilkan probabilitas jika tersedia
+                if 'probability' in result:
+                    prob = result['probability']
+                    st.write(f"Probabilitas: {prob:.2f}")
+                    
             else:
                 error_message = "Unknown error"
                 try:

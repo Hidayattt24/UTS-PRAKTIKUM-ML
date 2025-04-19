@@ -1,12 +1,7 @@
-# Backend - FastAPI
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, EmailStr
 import joblib
 import pandas as pd
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
 
 app = FastAPI()
 
@@ -14,7 +9,7 @@ app = FastAPI()
 class UserInput(BaseModel):
     name: str
     gender_female: int  # One-hot encoding untuk female
-    gender_male: int  # One-hot encoding untuk male
+    gender_male: int    # One-hot encoding untuk male
     email_id: EmailStr
     is_glogin: bool
     follower_count: int
@@ -28,27 +23,6 @@ class UserInput(BaseModel):
     total_votes_gave_dc: int
     model_choice: str  # Untuk memilih model yang akan digunakan
 
-# Fungsi preprocessing pipeline
-def preprocess_pipeline():
-    numeric_features = [
-        'follower_count', 'following_count', 'dataset_count',
-        'code_count', 'discussion_count', 'avg_nb_read_time_min',
-        'total_votes_gave_nb', 'total_votes_gave_ds', 'total_votes_gave_dc'
-    ]
-    
-    categorical_boolean_features = ['is_glogin']
-
-    numeric_transformer = Pipeline(steps=[('scaler', StandardScaler())])
-
-    categorical_boolean_transformer = Pipeline(steps=[('onehot', OneHotEncoder(handle_unknown='ignore'))])
-
-    preprocessor = ColumnTransformer(transformers=[
-        ('num', numeric_transformer, numeric_features),
-        ('cat', categorical_boolean_transformer, categorical_boolean_features)
-    ])
-
-    return preprocessor
-
 # Load model yang telah dilatih
 rf_model = joblib.load('../../model/model_rf_tuned.pkl')
 bagging_model = joblib.load('../../model/model_bagging_tuned.pkl')
@@ -59,47 +33,57 @@ models = {
     'bagging': bagging_model
 }
 
+# Kolom yang sesuai dengan urutan saat pelatihan model
+column_order = [
+    'IS_GLOGIN',
+    'FOLLOWER_COUNT',
+    'FOLLOWING_COUNT',
+    'DATASET_COUNT',
+    'CODE_COUNT',
+    'DISCUSSION_COUNT',
+    'AVG_NB_READ_TIME_MIN',
+    'TOTAL_VOTES_GAVE_NB',
+    'TOTAL_VOTES_GAVE_DS',
+    'TOTAL_VOTES_GAVE_DC',
+    'GENDER_Female',
+    'GENDER_Male'
+]
+
 @app.post("/predict/")
 async def predict(user_input: UserInput):
-    # Mengubah input menjadi format yang benar
+    # Menyusun data dengan kolom yang sesuai urutan pelatihan
     data = {
-        'name': user_input.name,
-        'gender_female': user_input.gender_female,
-        'gender_male': user_input.gender_male,
-        'is_glogin': user_input.is_glogin,
-        'follower_count': user_input.follower_count,
-        'following_count': user_input.following_count,
-        'dataset_count': user_input.dataset_count,
-        'code_count': user_input.code_count,
-        'discussion_count': user_input.discussion_count,
-        'avg_nb_read_time_min': user_input.avg_nb_read_time_min,
-        'total_votes_gave_nb': user_input.total_votes_gave_nb,
-        'total_votes_gave_ds': user_input.total_votes_gave_ds,
-        'total_votes_gave_dc': user_input.total_votes_gave_dc
+        'IS_GLOGIN': user_input.is_glogin,
+        'FOLLOWER_COUNT': user_input.follower_count,
+        'FOLLOWING_COUNT': user_input.following_count,
+        'DATASET_COUNT': user_input.dataset_count,
+        'CODE_COUNT': user_input.code_count,
+        'DISCUSSION_COUNT': user_input.discussion_count,
+        'AVG_NB_READ_TIME_MIN': user_input.avg_nb_read_time_min,
+        'TOTAL_VOTES_GAVE_NB': user_input.total_votes_gave_nb,
+        'TOTAL_VOTES_GAVE_DS': user_input.total_votes_gave_ds,
+        'TOTAL_VOTES_GAVE_DC': user_input.total_votes_gave_dc,
+        'GENDER_Female': user_input.gender_female,
+        'GENDER_Male': user_input.gender_male
     }
-    
-    # Mengubah menjadi DataFrame
-    df = pd.DataFrame([data])
-    
-    # Hapus kolom name karena tidak digunakan untuk prediksi
-    if 'name' in df.columns:
-        df = df.drop('name', axis=1)
 
-    # Pilih model berdasarkan pilihan pengguna
+    df = pd.DataFrame([data])[column_order]
+
+    # Pilih model berdasarkan input
     model_choice = user_input.model_choice
     if model_choice not in models:
         raise HTTPException(status_code=400, detail=f"Model '{model_choice}' tidak tersedia")
-    
+
     selected_model = models[model_choice]
-    
+
     try:
-        # Prediksi langsung menggunakan model yang sudah terlatih
+        # Prediksi menggunakan model
         prediction = selected_model.predict(df)
         return {"prediction": int(prediction[0]), "model_used": model_choice}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error prediksi: {str(e)}")
+        error_message = f"Error prediksi: {str(e)}"
+        raise HTTPException(status_code=400, detail=error_message)
 
-# Endpoint untuk mendapatkan daftar model yang tersedia
 @app.get("/models/")
 async def get_models():
     return {"available_models": list(models.keys())}
