@@ -1,6 +1,9 @@
 # Ignore dataset folder
 dataset/
 
+# Ignore model folder
+model/
+
 # Python
 __pycache__/
 *.py[cod]
