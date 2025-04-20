@@ -1,18 +1,30 @@
-import uuid
 import uvicorn
 import joblib
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, EmailStr
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler
 from sklearn.compose import ColumnTransformer
+import os
+from fastapi.middleware.cors import CORSMiddleware
 
 # Create FastAPI instance
-app = FastAPI(title="ML Bot Prediction API",
-              description="API for predicting whether a user is a bot based on usage metrics",
-              version="1.0.0")
+app = FastAPI(
+    title="Bot Detection API",
+    description="API for predicting whether a user is a bot based on their activity metrics",
+    version="1.0.0"
+)
+
+# Add CORS middleware to allow requests from Streamlit
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
+)
 
 # User input schema
 class UserInput(BaseModel):
@@ -32,38 +44,35 @@ class UserInput(BaseModel):
     total_votes_gave_dc: int
     model_choice: str = "random_forest"  # Default model choice
 
-# Load trained models
-models = {
-    "random_forest": joblib.load('../../model/model_rf_tuned.pkl'),
-    "bagging": joblib.load('../../model/model_bagging_tuned.pkl')
-}
+# Model paths - update these with your actual model paths
+MODEL_DIR = "../../model"
+RF_MODEL_PATH = os.path.join(MODEL_DIR, "model_rf_tuned.pkl")
+BAGGING_MODEL_PATH = os.path.join(MODEL_DIR, "model_bagging_tuned.pkl")
 
-# Normalization parameters
-scaler_mean = {
-    'TOTAL_VOTES_GAVE_NB': 17.535584640490224,
-    'TOTAL_VOTES_GAVE_DS': 6.530441542006134,
-    'TOTAL_VOTES_GAVE_DC': 1.5298814400372998,
-    'DATASET_COUNT': 2.529110164488324,
-    'FOLLOWING_COUNT': 44.69164343000391,
-    'FOLLOWER_COUNT': 26.80728556420434,
-    'CODE_COUNT': 10.36182435807773,
-    'AVG_NB_READ_TIME_MIN': 12.715438521996866,
-    'DISCUSSION_COUNT': 65.79288564534343
-}
+# Load models
+try:
+    rf_model = joblib.load(RF_MODEL_PATH)
+    bagging_model = joblib.load(BAGGING_MODEL_PATH)
+    
+    # Dictionary of available models
+    models = {
+        "random_forest": rf_model,
+        "bagging": bagging_model
+    }
+except Exception as e:
+    # Use placeholder models for testing if real models are not available
+    # In a production environment, you would handle this differently
+    print(f"Error loading models: {str(e)}")
+    print("Using placeholder models for testing purposes")
+    
+    # Create dummy models (only for testing - remove in production)
+    from sklearn.ensemble import RandomForestClassifier, BaggingClassifier
+    models = {
+        "random_forest": RandomForestClassifier(),
+        "bagging": BaggingClassifier()
+    }
 
-scaler_std = {
-    'TOTAL_VOTES_GAVE_NB': 4.475612457559885,
-    'TOTAL_VOTES_GAVE_DS': 2.225461628724728,
-    'TOTAL_VOTES_GAVE_DC': 1.0909238003275576,
-    'DATASET_COUNT': 2.4280590832682174,
-    'FOLLOWING_COUNT': 38.3139331407359,
-    'FOLLOWER_COUNT': 22.329235354928624,
-    'CODE_COUNT': 8.001625654143362,
-    'AVG_NB_READ_TIME_MIN': 9.277711153987854,
-    'DISCUSSION_COUNT': 46.123942659824834
-}
-
-# Columns in order used during model training
+# Order of features expected by the models
 column_order = [
     'IS_GLOGIN',
     'FOLLOWER_COUNT',
@@ -79,7 +88,7 @@ column_order = [
     'GENDER_Male'
 ]
 
-# Preprocessing pipeline
+# Define preprocessing pipeline
 def preprocess_pipeline():
     numeric_features = [
         'FOLLOWER_COUNT',
@@ -93,44 +102,51 @@ def preprocess_pipeline():
         'TOTAL_VOTES_GAVE_DC'
     ]
 
-    categorical_boolean_features = [
+    categorical_features = [
         'IS_GLOGIN',
         'GENDER_Female',
         'GENDER_Male'
     ]
 
+    # Standard scaler for numeric features
     numeric_transformer = Pipeline(steps=[
         ('scaler', StandardScaler())
     ])
 
+    # Pass-through for categorical features (already binary)
     categorical_transformer = Pipeline(steps=[
-        ('passthrough', 'passthrough')  # Already in numeric form (0/1)
+        ('passthrough', 'passthrough')
     ])
 
-    preprocessor = ColumnTransformer(transformers=[
-        ('num', numeric_transformer, numeric_features),
-        ('cat', categorical_transformer, categorical_boolean_features)
-    ])
+    # Combine transformers in a column transformer
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numeric_features),
+            ('cat', categorical_transformer, categorical_features)
+        ]
+    )
 
     return preprocessor
 
-# Manual normalization function
-def normalize_data(data):
-    cols_to_scale = [
-        'TOTAL_VOTES_GAVE_NB', 'TOTAL_VOTES_GAVE_DS', 'TOTAL_VOTES_GAVE_DC',
-        'DATASET_COUNT', 'FOLLOWING_COUNT', 'FOLLOWER_COUNT',
-        'CODE_COUNT', 'AVG_NB_READ_TIME_MIN', 'DISCUSSION_COUNT'
-    ]
-    
-    for col in cols_to_scale:
-        if col in data.columns:
-            data[col] = (data[col] - scaler_mean[col]) / scaler_std[col]
-    return data
+@app.get("/health", summary="Check API health status")
+async def health_check():
+    """Health check endpoint to verify API is running."""
+    return {"status": "healthy", "models_loaded": list(models.keys())}
 
-@app.post("/predict/", summary="Predict whether a user is a bot based on usage metrics")
+@app.get("/models/", summary="Get list of available models")
+async def get_models():
+    """Get the list of available prediction models."""
+    return {"available_models": list(models.keys())}
+
+@app.post("/predict/", summary="Predict if a user is a bot based on their activity metrics")
 async def predict(user_input: UserInput):
+    """
+    Predict whether a user is a bot based on their activity metrics.
+    
+    The prediction is made using the selected model (random_forest or bagging).
+    """
     try:
-        # Prepare data in correct format and column order
+        # Prepare input data with the correct column format
         data = {
             'IS_GLOGIN': int(user_input.is_glogin),
             'FOLLOWER_COUNT': user_input.follower_count,
@@ -145,75 +161,56 @@ async def predict(user_input: UserInput):
             'GENDER_Female': user_input.gender_female,
             'GENDER_Male': user_input.gender_male
         }
-
-        df = pd.DataFrame([data])
         
-        # Select model
+        # Create DataFrame with the correct column order
+        df = pd.DataFrame([data])[column_order]
+        
+        # Select the requested model
         model_choice = user_input.model_choice
         if model_choice not in models:
             raise HTTPException(status_code=400, detail=f"Model '{model_choice}' not available")
         
         selected_model = models[model_choice]
         
-        # Process data based on model requirements
-        if hasattr(selected_model, 'feature_names_in_'):
-            # For scikit-learn models with feature_names_in_ attribute
-            df_ordered = df[column_order]
-            processed_data = preprocess_pipeline().fit_transform(df_ordered)
-            prediction = selected_model.predict(processed_data)
-            
-            # Calculate probabilities if available
-            probabilities = None
-            if hasattr(selected_model, 'predict_proba'):
-                probabilities = selected_model.predict_proba(processed_data)
-                bot_probability = float(probabilities[0][1])  # Probability of class 1 (bot)
-            else:
-                bot_probability = None
-                
-            # Get feature importance if available
-            feature_importance = None
-            if hasattr(selected_model, 'feature_importances_'):
-                feature_importance = {
-                    feature: float(importance) 
-                    for feature, importance in zip(column_order, selected_model.feature_importances_)
-                }
-                
-            result = {
-                "prediction": int(prediction[0]),
-                "model_used": model_choice,
-                "user_name": user_input.name,
-                "user_email": user_input.email_id
+        # Apply preprocessing
+        preprocessor = preprocess_pipeline()
+        processed_data = preprocessor.fit_transform(df)
+        
+        # Make prediction
+        prediction = selected_model.predict(processed_data)
+        
+        # Get prediction probability if available
+        probability = None
+        if hasattr(selected_model, 'predict_proba'):
+            probabilities = selected_model.predict_proba(processed_data)
+            probability = float(probabilities[0][1])  # Probability of class 1 (bot)
+        
+        # Get feature importance if available
+        feature_importance = None
+        if hasattr(selected_model, 'feature_importances_'):
+            feature_importance = {
+                feature: float(importance)
+                for feature, importance in zip(column_order, selected_model.feature_importances_)
             }
+        
+        # Build response
+        result = {
+            "prediction": int(prediction[0]),
+            "model_used": model_choice,
+            "user_name": user_input.name,
+            "user_email": user_input.email_id,
+        }
+        
+        if probability is not None:
+            result["probability"] = probability
+        
+        if feature_importance is not None:
+            result["feature_importance"] = feature_importance
             
-            if bot_probability is not None:
-                result["probability"] = bot_probability
-                
-            if feature_importance is not None:
-                result["feature_importance"] = feature_importance
-                
-            return result
-        else:
-            # Fallback to manual normalization method
-            normalized_data = normalize_data(df)
-            prediction = selected_model.predict(normalized_data)
-            
-            return {
-                "prediction": int(prediction[0]),
-                "model_used": model_choice,
-                "user_name": user_input.name,
-                "user_email": user_input.email_id
-            }
-            
+        return result
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during prediction process: {str(e)}")
-
-@app.get("/models/", summary="Get list of available models")
-async def get_models():
-    return {"available_models": list(models.keys())}
-
-@app.get("/health", summary="Check API health status")
-async def health_check():
-    return {"status": "healthy"}
+        raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
