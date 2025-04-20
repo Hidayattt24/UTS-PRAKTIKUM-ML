@@ -16,5 +16,8 @@ __pycache__/
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
 
+# Zip
+KELOMPOK5.zip
+
 # VS Code
 .vscode/

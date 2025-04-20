@@ -1,7 +1,12 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, EmailStr
+import uvicorn
 import joblib
 import pandas as pd
+import numpy as np
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, EmailStr
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
 
 app = FastAPI()
 
@@ -49,9 +54,44 @@ column_order = [
     'GENDER_Male'
 ]
 
+# Pipeline Preprocessing
+def preprocess_pipeline():
+    numeric_features = [
+        'FOLLOWER_COUNT',
+        'FOLLOWING_COUNT',
+        'DATASET_COUNT',
+        'CODE_COUNT',
+        'DISCUSSION_COUNT',
+        'AVG_NB_READ_TIME_MIN',
+        'TOTAL_VOTES_GAVE_NB',
+        'TOTAL_VOTES_GAVE_DS',
+        'TOTAL_VOTES_GAVE_DC'
+    ]
+
+    categorical_boolean_features = [
+        'IS_GLOGIN',
+        'GENDER_Female',
+        'GENDER_Male'
+    ]
+
+    numeric_transformer = Pipeline(steps=[
+        ('scaler', StandardScaler())
+    ])
+
+    categorical_transformer = Pipeline(steps=[
+        ('passthrough', 'passthrough')  # Sudah dalam bentuk angka (0/1)
+    ])
+
+    preprocessor = ColumnTransformer(transformers=[
+        ('num', numeric_transformer, numeric_features),
+        ('cat', categorical_transformer, categorical_boolean_features)
+    ])
+
+    return preprocessor
+
 @app.post("/predict/")
 async def predict(user_input: UserInput):
-    # Menyusun data dengan kolom yang sesuai urutan pelatihan
+    # Menyusun data dalam urutan kolom yang sesuai
     data = {
         'IS_GLOGIN': user_input.is_glogin,
         'FOLLOWER_COUNT': user_input.follower_count,
@@ -69,21 +109,27 @@ async def predict(user_input: UserInput):
 
     df = pd.DataFrame([data])[column_order]
 
-    # Pilih model berdasarkan input
-    model_choice = user_input.model_choice
-    if model_choice not in models:
-        raise HTTPException(status_code=400, detail=f"Model '{model_choice}' tidak tersedia")
-
-    selected_model = models[model_choice]
-
+    # Jalankan pipeline preprocessing
     try:
-        # Prediksi menggunakan model
-        prediction = selected_model.predict(df)
+        preprocessing_pipeline = preprocess_pipeline()
+        processed_data = preprocessing_pipeline.fit_transform(df)
+
+        # Pilih model
+        model_choice = user_input.model_choice
+        if model_choice not in models:
+            raise HTTPException(status_code=400, detail=f"Model '{model_choice}' tidak tersedia")
+
+        selected_model = models[model_choice]
+        prediction = selected_model.predict(processed_data)
+
         return {"prediction": int(prediction[0]), "model_used": model_choice}
+
     except Exception as e:
-        error_message = f"Error prediksi: {str(e)}"
-        raise HTTPException(status_code=400, detail=error_message)
+        raise HTTPException(status_code=500, detail=f"Error selama proses prediksi: {str(e)}")
 
 @app.get("/models/")
 async def get_models():
     return {"available_models": list(models.keys())}
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
